@@ -1,0 +1,266 @@
+// Etch-a-sketcher - expriments in PCI interrupts on ATMEL 328 processors.
+// David Reid 05-05-2020.
+// Published as an instructable on www.instructables.com under my user name 3D-reid
+//
+// and now the fun begins....
+#include 
+// This allows us to access the internal registers of the ATMEL chip
+// Drivers for the TFT display which is 128 X 160 SPI (even though the board is labelled like an I2C.
+#include \
+#include \
+// Color definitions for the TFT (copied from internet)
+//#define WHITE 0xFFFF
+//#define BLACK 0x0000
+//#define BLUE 0x001F
+//#define RED 0xF800 
+//#define GREEN 0x07E0
+//#define CYAN 0x07FF
+//#define MAGENTA 0xF81F
+//#define YELLOW 0xFFE0
+//
+#define stepsize 1
+#define cs A0
+#define dc A1
+#define rst A2
+// SETUP TFT
+TFT TFTscreen = TFT(cs, dc, rst);
+//////////////////////////////////////////////////
+//  Table of interrupt registers
+// -----------------------------
+// PORT D (PCINT2)
+// Port bit Pin  PCINT#    Function
+// PD2      2    PCINT18   BTN
+// PD3      3    PCINT19   RHT
+// PD4      4    PCINT20   LFT
+// PD5      5    PCINT21   DWN
+// PD6      6    PCINT22   UP
+// -----------------------------
+// PORT B (PCINT0)
+// Port bit Pin  PCINT#    Function
+// PB4      12   PCINT4   EXTBTN1
+// -----------------------------
+// unsigned integers - cos we might need all 8 bits
+unsigned int BTN;
+unsigned int RHT;
+unsigned int LFT;
+unsigned int DWN;
+unsigned int  UP;
+// loads of volitile variables - cos the interrupt routine needs to also 
+// write to these and otherwise the compiler will make them static.
+volatile unsigned int rollerD;
+//
+volatile unsigned int BTN_I;
+volatile unsigned int RHT_I;
+volatile unsigned int LFT_I;
+volatile unsigned int DWN_I;
+volatile unsigned int  UP_I;
+// myColor[] probably doesn't need to be volatile- but we have a lot of space so why not.
+volatile double myColor[] {0x0000,0xFFFF,0x001F,0xF800,0x07E0,0x07FF,0xF81F,0xFFE0};
+//                         black,white,blue,red,green,cyan,magenta,yellow
+// define integers
+volatile int selector=0; // The first time it is powered up, the selector will increment to 1, (white),
+// Note, my screen is mounted upside-down so the origin of the display is in the top,roght in portrait mode
+int x0 = 80;
+int y0 = 64;
+int x1;
+int y1; 
+// for the sake of my sanity, I reference X and Y to the physical screen and not to the logical screen.
+void setup()
+{
+  // set the pins going to the LEDs on the trackball to outputd 
+pinMode(7,OUTPUT);
+pinMode(8,OUTPUT);
+pinMode(9,OUTPUT);
+pinMode(10,OUTPUT);
+  // clear all the LEDs
+digitalWrite(7,LOW);
+digitalWrite(8,LOW);
+digitalWrite(9,LOW);
+digitalWrite(10,LOW);
+// setup the TFT and display message
+    TFTscreen.begin();
+  delay(50); // the TFT display takes a little while to initialize
+  TFTscreen.background(0, 0, 0); // set background color to black
+  TFTscreen.stroke(0, 255, 0); // set the text color to green
+  TFTscreen.setTextSize(2); // chooses a large font size
+  // Write the text to the screen
+  TFTscreen.text("Etch", 55, 20);
+  TFTscreen.text("-a-", 60,40);
+  TFTscreen.text("Sketcher", 35,60);
+  TFTscreen.setTextSize(1);
+  TFTscreen.text("D.A.Reid", 0,80);
+  TFTscreen.text("copyright 2020", 75,80);
+  // Disable interrupts while we play with the registers
+  cli();
+  PCICR |= 0b00000100;  // Enable on PORTD Pin Change Interrupts
+  PCMSK2 |= 0b01111100; // PCINT2 Used to mask PORT D for the button and 4 directions of the rollerball (pins 2-6 on the Nano)
+  // ok done, re-enable the interrupts
+  sei();
+ delay(2000); // this waits 2 seconds while the title screen is showing.
+ TFTscreen.background(0, 0, 0); // then set the background to black
+  TFTscreen.drawPixel(x0, y0, 0xFFFF); // a white dot at the centr of the screen
+}
+void loop()
+{
+  cli(); // Clear the interrupt flag register so that we don't get wrong data in the _I versions of the variables
+PCMSK2 &= 0b10000011; // clear the bits so we don't get disturbed by extra inputs
+ sei();
+  //
+  // My thinking behind this way of doing it...
+  //
+  // Each of the inputs below had either a 0 or a 1 in bit0, (Hex 0x00 or 0x01). So I exclusive OR (^) the old value with the updated value (_I version) and print results if it is still 1
+  // For example, if RHT contains 0 and an interrupt happens (because of this input pin), it does an XOR with the new value which must be a 1 and the result is 1 - (the if-statement is true)
+  // so it knows there was a change on this pin... on the second round the input pin register is 1 and because the interrupt only activates on a change in the state of the pin, the _I version has to be 0
+  // otherwise, the interrupt would not be triggered. When it is triggered, the value of the _1 is set to 0; So, in the main program loop,I XOR the old pin state with the new updated interrupt (_I) version.
+  // and the answer is 1 XOR 0 = 1 (making the if-statement true). 
+  //
+  // Truth table for the circuit and code
+  // ====================================
+  // old_state    state_I      result (1 = true 0=false)
+  //   0             1            1 true (this pin changed)
+  //   1             0            1 true (this pin changed)
+  //   0             0            0 false (nothing changed)
+  //   1             1            0 false (nothing changed)
+  //
+  // So, why would you get a false? Simply because something else that is interrupt enabled on the PORT triggered the interrupt - but not our pin.
+  // The beauty of this mechanism is it allows you to see state changes in multiple pins at the sanme time, like rolling diagonal, or rollong while holding the button down.
+  //
+ if (BTN ^ BTN_I) {
+	if (BTN_I == 1){
+		if (selector <=6){
+			selector++;
+		}
+		else {
+			selector = 0;
+		}
+	}
+}
+if (RHT ^ RHT_I) {
+	y1 = y0 - stepsize;
+	if (y1 < 0)
+		{
+        y1 = 0;
+        y0 = 0;
+		}
+    x1 = x0;
+    TFTscreen.drawLine(x0, y0, x1, y1, myColor[selector]);
+    x0 = x1;
+    y0 = y1;
+}
+  if (LFT ^ LFT_I) {
+     y1 = y0 + stepsize;
+          if (y1 > 128)
+          {
+            y1 = 128;
+            y0 = 128;
+          }
+          x1 = x0;
+          TFTscreen.drawLine(x0, y0, x1, y1, myColor[selector]);
+          x0 = x1;
+          y0 = y1;
+  }
+  if (DWN ^ DWN_I) {
+          x1 = x0 + stepsize;
+          if (x1 > 160)
+          {
+            x1 = 160;
+            x0 = 160;
+          }
+          y1 = y0;
+          TFTscreen.drawLine(x0, y0, x1, y1, myColor[selector]);
+          x0 = x1;
+          y0 = y1;
+  }
+  if (UP ^ UP_I) {
+          x1 = x0 - stepsize;
+          if (x1 < 0)
+          {
+            x1 = 0;
+            x0 = 0;
+          }
+          y1 = y0;
+          TFTscreen.drawLine(x0, y0, x1, y1, myColor[selector]);
+          x0 = x1;
+          y0 = y1;
+  }
+  // update the current state from the last interrupt state, before re-enabling the interrupts.
+  BTN = BTN_I;
+  RHT = RHT_I;
+  LFT = LFT_I;
+  DWN = DWN_I;
+  UP = UP_I;
+  // update the LED under the button to match the selected color
+ switch (selector) {
+  case 0: // black - all off == used to erase bits of the picture.
+digitalWrite(7,LOW);
+digitalWrite(8,LOW);
+digitalWrite(9,LOW);
+digitalWrite(10,LOW);
+  break;
+  case 1: // white
+digitalWrite(7,HIGH);
+digitalWrite(8,LOW);
+digitalWrite(9,LOW);
+digitalWrite(10,LOW);
+  break;
+  case 2: // red
+digitalWrite(7,LOW);
+digitalWrite(8,LOW);
+digitalWrite(9,LOW);
+digitalWrite(10,HIGH);
+  break;
+case 3: // blue
+digitalWrite(7,LOW);
+digitalWrite(8,LOW);
+digitalWrite(9,HIGH);
+digitalWrite(10,LOW);
+  break;    
+case 4: // green
+digitalWrite(7,LOW);
+digitalWrite(10,LOW);
+digitalWrite(8,HIGH);
+digitalWrite(9,LOW);
+digitalWrite(10,LOW);
+  break; 
+  case 5: // yellow
+digitalWrite(7,HIGH);
+digitalWrite(8,HIGH);
+digitalWrite(9,LOW);
+digitalWrite(10,LOW);
+  break; 
+  case 6: // magenta
+digitalWrite(7,LOW);
+digitalWrite(8,LOW);
+digitalWrite(9,HIGH);
+digitalWrite(10,HIGH);
+  break; 
+  case 7: // cyan
+digitalWrite(7,HIGH);
+digitalWrite(8,LOW);
+digitalWrite(9,HIGH);
+digitalWrite(10,LOW);
+  break; 
+  }
+  // re-enable the interrupts so we can get a new set of values from the port(s)
+  cli();
+  PCMSK2 |= 0b01111100;
+  sei();
+  // The delay(1); is the window of opportunity for new interrupts to occur - might not seem
+  // like a lot of time, but actually it is quite long for a 16MHz RISC processor.
+  // (16 MHz = 0.0000625 ms)
+  // so within a delay of 1mS means we can read the port ~1600 times (if it only took 1 clock tick to read...) but it takes 2, so we can read it ~800 times in 1mS.
+  delay(1);
+}
+ISR(PCINT2_vect)
+{
+  // The idea here is that we read the port immedaitely after the interrupt
+  // then mask off the different bits and shift them to bit_0
+  // then exit the interrupt routine and in the main program, do an XOR, to see if a bit changed, then report this
+  // later this will send a draw/move command to the screen
+  rollerD = PIND;
+  BTN_I = (rollerD & B00000100) >> 2;
+  RHT_I = (rollerD & B00001000) >> 3;
+  LFT_I = (rollerD & B00010000) >> 4;
+  DWN_I = (rollerD & B00100000) >> 5;
+  UP_I = (rollerD & B01000000) >> 6;
+}
