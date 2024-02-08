@@ -1,0 +1,146 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// Joystick pins
+const int joystickXPin = A0;
+const int joystickYPin = A1;
+const int joystickButtonPin = 2;
+
+// Display settings
+const int displayColumns = 20;
+const int displayRows = 4;
+
+// I2C address of the LCD display
+const int lcdAddress = 0x27;
+LiquidCrystal_I2C lcd(lcdAddress, displayColumns, displayRows);
+
+// Cursor position
+int cursorX = displayColumns / 2;
+int cursorY = displayRows / 2;
+
+// Flag to track if "*" should remain on the screen
+bool drawStar = false;
+
+// State of each position on the display
+bool displayState[displayRows][displayColumns];
+
+void setup() {
+  // Initialize serial communication
+  Serial.begin(9600);
+  while (!Serial) {
+    ; // Wait for serial port to connect
+  }
+
+  // Initialize the LCD display
+  lcd.init();
+  lcd.backlight();
+  lcd.begin(displayColumns, displayRows);
+
+  // Set initial cursor position
+  lcd.setCursor(cursorX, cursorY);
+  lcd.print("*");
+
+  // Initialize display state
+  clearDisplayState();
+
+  // Set joystick button pin as input with internal pull-up resistor
+  pinMode(joystickButtonPin, INPUT_PULLUP);
+}
+
+void loop() {
+  // Read joystick values
+  int joystickXValue = analogRead(joystickXPin);
+  int joystickYValue = analogRead(joystickYPin);
+  int joystickButtonState = digitalRead(joystickButtonPin);
+
+  // Adjust cursor position based on joystick input
+  if (joystickXValue < 100) {
+    moveCursorLeft();
+  } else if (joystickXValue > 900) {
+    moveCursorRight();
+  }
+
+  if (joystickYValue < 100) {
+    moveCursorUp();
+  } else if (joystickYValue > 900) {
+    moveCursorDown();
+  }
+
+  // Check if joystick button is pressed
+  if (joystickButtonState == LOW) {
+    // Reset display and set the "*" flag to true
+    lcd.clear();
+    drawStar = true;
+
+    // Set cursor to the center of the display
+    cursorX = displayColumns / 2;
+    cursorY = displayRows / 2;
+
+    // Clear display state
+    clearDisplayState();
+
+    // Print reset message to serial monitor
+    Serial.println("Display reset.");
+  }
+
+  // Update display based on the cursor position
+  updateDisplay();
+
+  // Print cursor position to serial monitor
+  Serial.print("Cursor Position - X: ");
+  Serial.print(cursorX);
+  Serial.print(", Y: ");
+  Serial.println(cursorY);
+}
+
+void moveCursorLeft() {
+  cursorX--;
+  if (cursorX < 0) cursorX = 0;
+}
+
+void moveCursorRight() {
+  cursorX++;
+  if (cursorX >= displayColumns) cursorX = displayColumns - 1;
+}
+
+void moveCursorUp() {
+  cursorY--;
+  if (cursorY < 0) cursorY = 0;
+}
+
+void moveCursorDown() {
+  cursorY++;
+  if (cursorY >= displayRows) cursorY = displayRows - 1;
+}
+
+void updateDisplay() {
+  lcd.clear();
+
+  // Check if the "*" flag is set, if so, draw "*" at the cursor position
+  if (drawStar) {
+    lcd.setCursor(cursorX, cursorY);
+    lcd.print("*");
+
+    // Set display state at the cursor position to true
+    displayState[cursorY][cursorX] = true;
+  }
+
+  // Draw "*" at each position in the display state array that is true
+  for (int row = 0; row < displayRows; row++) {
+    for (int col = 0; col < displayColumns; col++) {
+      if (displayState[row][col]) {
+        lcd.setCursor(col, row);
+        lcd.print("*");
+      }
+    }
+  }
+}
+
+void clearDisplayState() {
+  // Initialize all positions in the display state array to false
+  for (int row = 0; row < displayRows; row++) {
+    for (int col = 0; col < displayColumns; col++) {
+      displayState[row][col] = false;
+    }
+  }
+}
